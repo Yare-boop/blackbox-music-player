@@ -30,6 +30,18 @@ let currentIndex = 0;
 let db = null;
 let playlists = [];
 
+// ==================== THROTTLE PARA RENDIMIENTO ====================
+function throttle(func, limit) {
+    let inThrottle;
+    return function(...args) {
+        if (!inThrottle) {
+            func.apply(this, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    };
+}
+
 // ==================== INDEXEDDB ====================
 function initDB() {
     return new Promise((resolve) => {
@@ -160,7 +172,9 @@ function deleteSong(id) {
     });
 }
 
-// ==================== RENDER LISTA ====================
+// ==================== RENDER LISTA OPTIMIZADO ====================
+let renderTimeout = null;
+
 async function renderSongsList() {
     if (songs.length === 0) {
         playlistEl.innerHTML = '<li class="empty-playlist">🎵 No hay canciones. Agrega música</li>';
@@ -169,45 +183,66 @@ async function renderSongsList() {
         return;
     }
     
-    playlistEl.innerHTML = songs.map(s => `
-        <li data-id="${s.id}" style="padding:12px; margin-bottom:8px; background:rgba(0,0,0,0.4); border-radius:12px; cursor:pointer; display:flex; justify-content:space-between; align-items:center">
-            <div style="flex:1">
-                <div><strong>${escapeHtml(s.title)}</strong></div>
-                <div style="font-size:0.8rem; color:#c9a87b">${escapeHtml(s.artist)}</div>
-                <div style="font-size:0.7rem; color:#888">${(s.size / 1024 / 1024).toFixed(2)} MB</div>
-            </div>
-            <div style="display:flex; gap:5px">
-                <button class="lyrics-btn" data-id="${s.id}" style="background:rgba(100,100,200,0.3); border:1px solid #6b9b6b; color:#a8c8a8; padding:5px 8px; border-radius:8px; cursor:pointer; font-size:0.7rem" title="Ver letras">📖</button>
-                <button class="del-btn" data-id="${s.id}" style="background:#8b3a2a; border:none; color:white; padding:5px 10px; border-radius:5px; cursor:pointer">🗑️</button>
-            </div>
-        </li>
-    `).join('');
+    if (renderTimeout) clearTimeout(renderTimeout);
     
-    document.querySelectorAll('#playlist li').forEach(li => {
-        li.addEventListener('click', async (e) => {
-            if (e.target.classList.contains('del-btn')) return;
-            if (e.target.classList.contains('lyrics-btn')) return;
-            const id = parseInt(li.dataset.id);
-            const index = songs.findIndex(s => s.id === id);
-            if (index !== -1) await playSong(index);
+    renderTimeout = setTimeout(() => {
+        const fragment = document.createDocumentFragment();
+        const ul = document.createElement('ul');
+        ul.style.listStyle = 'none';
+        ul.style.padding = '0';
+        
+        const displaySongs = songs;
+        
+        displaySongs.forEach(s => {
+            const li = document.createElement('li');
+            li.dataset.id = s.id;
+            li.style.cssText = 'padding:12px; margin-bottom:8px; background:rgba(0,0,0,0.4); border-radius:12px; cursor:pointer; display:flex; justify-content:space-between; align-items:center';
+            li.innerHTML = `
+                <div style="flex:1">
+                    <div><strong>${escapeHtml(s.title)}</strong></div>
+                    <div style="font-size:0.8rem; color:#c9a87b">${escapeHtml(s.artist)}</div>
+                    <div style="font-size:0.7rem; color:#888">${(s.size / 1024 / 1024).toFixed(2)} MB</div>
+                </div>
+                <div style="display:flex; gap:5px">
+                    <button class="lyrics-btn" data-id="${s.id}" style="background:rgba(100,100,200,0.3); border:1px solid #6b9b6b; color:#a8c8a8; padding:5px 8px; border-radius:8px; cursor:pointer; font-size:0.7rem" title="Ver letras">📖</button>
+                    <button class="del-btn" data-id="${s.id}" style="background:#8b3a2a; border:none; color:white; padding:5px 10px; border-radius:5px; cursor:pointer">🗑️</button>
+                </div>
+            `;
+            ul.appendChild(li);
         });
         
-        li.querySelector('.del-btn')?.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const id = parseInt(e.target.dataset.id);
-            if (confirm('¿Eliminar?')) {
-                await deleteSong(id);
-                await loadSongs();
-            }
-        });
+        fragment.appendChild(ul);
+        playlistEl.innerHTML = '';
+        playlistEl.appendChild(fragment);
         
-        li.querySelector('.lyrics-btn')?.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const id = parseInt(e.target.dataset.id);
-            const song = songs.find(s => s.id === id);
-            if (song) showLyricsModal(song);
-        });
-    });
+        // Delegación de eventos (mejor rendimiento)
+        playlistEl.removeEventListener('click', handlePlaylistClick);
+        playlistEl.addEventListener('click', handlePlaylistClick);
+    }, 50);
+}
+
+// Manejador de eventos delegado
+function handlePlaylistClick(e) {
+    const delBtn = e.target.closest('.del-btn');
+    const lyricsBtn = e.target.closest('.lyrics-btn');
+    const li = e.target.closest('li');
+    
+    if (delBtn) {
+        e.stopPropagation();
+        const id = parseInt(delBtn.dataset.id);
+        if (confirm('¿Eliminar?')) {
+            deleteSong(id).then(() => loadSongs());
+        }
+    } else if (lyricsBtn) {
+        e.stopPropagation();
+        const id = parseInt(lyricsBtn.dataset.id);
+        const song = songs.find(s => s.id === id);
+        if (song) showLyricsModal(song);
+    } else if (li) {
+        const id = parseInt(li.dataset.id);
+        const index = songs.findIndex(s => s.id === id);
+        if (index !== -1) playSong(index);
+    }
 }
 
 // ==================== REPRODUCIR ====================
@@ -298,6 +333,111 @@ window.searchLyrics = async function(songId) {
     }
 };
 
+// ==================== DESCARGA CON PROGRESO ====================
+function updateDownloadProgress(percent) {
+    const progressFill = document.getElementById('download-progress-fill');
+    const progressPercent = document.getElementById('download-progress-percent');
+    if (progressFill) progressFill.style.width = `${percent}%`;
+    if (progressPercent) progressPercent.textContent = `${Math.round(percent)}%`;
+    confirmDownload.textContent = `Descargando ${Math.round(percent)}%`;
+}
+
+async function downloadWithProgress(url, onProgress) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'blob';
+        
+        xhr.onprogress = (event) => {
+            if (event.lengthComputable && onProgress) {
+                onProgress((event.loaded / event.total) * 100);
+            }
+        };
+        
+        xhr.onload = () => {
+            if (xhr.status === 200) {
+                resolve(xhr.response);
+            } else {
+                reject(new Error(`HTTP ${xhr.status}`));
+            }
+        };
+        
+        xhr.onerror = () => reject(new Error('Error de red'));
+        xhr.send();
+    });
+}
+
+async function downloadFromUrl(url, title, artist) {
+    if (!url) return alert('Ingresa una URL');
+    try {
+        confirmDownload.disabled = true;
+        const progressContainer = document.getElementById('download-progress-container');
+        if (progressContainer) progressContainer.style.display = 'block';
+        
+        const blob = await downloadWithProgress(url, (percent) => {
+            updateDownloadProgress(percent);
+        });
+        
+        await saveSong(title || 'Descargada', artist || 'Web', blob);
+        await loadSongs();
+        modal.style.display = 'none';
+        alert('✅ Descarga completada');
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        confirmDownload.disabled = false;
+        confirmDownload.textContent = 'Descargar';
+        const progressContainer = document.getElementById('download-progress-container');
+        if (progressContainer) progressContainer.style.display = 'none';
+        updateDownloadProgress(0);
+    }
+}
+
+async function downloadFromYouTube(url, title, artist) {
+    if (!url) return alert('Ingresa una URL de YouTube');
+    try {
+        confirmDownload.disabled = true;
+        const progressContainer = document.getElementById('download-progress-container');
+        if (progressContainer) progressContainer.style.display = 'block';
+        
+        const response = await fetch(`/api/download-youtube?url=${encodeURIComponent(url)}`);
+        if (!response.ok) throw new Error('Error en descarga de YouTube');
+        
+        const reader = response.body.getReader();
+        const contentLength = parseInt(response.headers.get('Content-Length'));
+        let receivedLength = 0;
+        const chunks = [];
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            receivedLength += value.length;
+            
+            if (contentLength) {
+                const percent = (receivedLength / contentLength) * 100;
+                updateDownloadProgress(percent);
+            }
+        }
+        
+        let blob = new Blob(chunks);
+        blob = new Blob([blob], { type: 'audio/mpeg' });
+        
+        await saveSong(title || 'Canción de YouTube', artist || 'YouTube', blob);
+        await loadSongs();
+        modal.style.display = 'none';
+        alert('✅ Descarga completada');
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        confirmDownload.disabled = false;
+        confirmDownload.textContent = 'Descargar';
+        const progressContainer = document.getElementById('download-progress-container');
+        if (progressContainer) progressContainer.style.display = 'none';
+        updateDownloadProgress(0);
+    }
+}
+
 // ==================== CARGAR CANCIONES ====================
 async function loadSongs() {
     songs = await getSongs();
@@ -313,7 +453,7 @@ async function loadSongs() {
     }
 }
 
-// ==================== SUBIR Y DESCARGAR ====================
+// ==================== SUBIR ARCHIVO ====================
 async function uploadFile(file) {
     if (!file.type.includes('audio')) return alert('Selecciona un archivo de audio');
     const title = file.name.replace(/\.[^/.]+$/, "");
@@ -323,57 +463,74 @@ async function uploadFile(file) {
     alert(`✅ ${title} agregada`);
 }
 
-async function downloadFromUrl(url, title, artist) {
-    if (!url) return alert('Ingresa una URL');
-    try {
-        confirmDownload.disabled = true;
-        confirmDownload.textContent = 'Descargando...';
-        document.getElementById('download-progress-container').style.display = 'block';
-        const response = await fetch(`/api/download?url=${encodeURIComponent(url)}`);
-        const blob = await response.blob();
-        await saveSong(title || 'Descargada', artist || 'Web', blob);
-        await loadSongs();
-        modal.style.display = 'none';
-        alert('✅ Descarga completada');
-    } catch (error) {
-        alert('Error: ' + error.message);
-    } finally {
-        confirmDownload.disabled = false;
-        confirmDownload.textContent = 'Descargar';
-        document.getElementById('download-progress-container').style.display = 'none';
+// ==================== COMPARTIR ====================
+async function sharePlaylistLink(playlistId) {
+    const playlist = playlists.find(p => p.id === playlistId);
+    if (!playlist) return;
+    
+    const songList = playlist.songIds.map(id => {
+        const song = songs.find(s => s.id === id);
+        return song ? `🎵 ${song.title} - ${song.artist}` : '';
+    }).filter(Boolean).join('\n');
+    
+    const shareText = `📀 Mi playlist: ${playlist.name}\n\n${songList}\n\n🎧 Creado con MusicBox`;
+    
+    if (navigator.share) {
+        try {
+            await navigator.share({
+                title: `Playlist: ${playlist.name}`,
+                text: shareText,
+            });
+            return;
+        } catch (err) {
+            console.log('Compartir cancelado');
+        }
     }
+    
+    showShareModal(playlist.name, shareText);
 }
 
-// ==================== DESCARGAR DESDE YOUTUBE ====================
-async function downloadFromYouTube(url, title, artist) {
-    if (!url) return alert('Ingresa una URL de YouTube');
-    try {
-        confirmDownload.disabled = true;
-        confirmDownload.textContent = '🎬 Descargando de YouTube...';
-        document.getElementById('download-progress-container').style.display = 'block';
-        
-        const response = await fetch(`/api/download-youtube?url=${encodeURIComponent(url)}`);
-        if (!response.ok) throw new Error('Error en descarga de YouTube');
-        
-        let blob = await response.blob();
-        
-        // FORZAR tipo MIME a audio/mpeg
-        blob = new Blob([blob], { type: 'audio/mpeg' });
-        console.log('📥 YouTube descargado:', blob.size, 'bytes, tipo:', blob.type);
-        
-        await saveSong(title || 'Canción de YouTube', artist || 'YouTube', blob);
-        await loadSongs();
-        
-        modal.style.display = 'none';
-        alert('✅ Descarga completada');
-    } catch (error) {
-        alert('Error: ' + error.message);
-    } finally {
-        confirmDownload.disabled = false;
-        confirmDownload.textContent = 'Descargar';
-        document.getElementById('download-progress-container').style.display = 'none';
-    }
+function showShareModal(playlistName, shareText) {
+    const existingModal = document.getElementById('custom-share-modal');
+    if (existingModal) existingModal.remove();
+    
+    const modalDiv = document.createElement('div');
+    modalDiv.id = 'custom-share-modal';
+    modalDiv.className = 'modal';
+    modalDiv.style.display = 'flex';
+    modalDiv.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <span class="close-modal" onclick="this.parentElement.parentElement.remove()">&times;</span>
+            <h3>📤 Compartir: ${escapeHtml(playlistName)}</h3>
+            <textarea id="share-text" readonly style="width:100%; height:150px; background:#1a1a2e; color:#e8d5b5; border:1px solid #9b7b4c; border-radius:8px; padding:10px; margin:15px 0;">${escapeHtml(shareText)}</textarea>
+            <button id="copy-share-btn" style="background:#6b9b6b; color:white; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; width:100%">📋 Copiar al portapapeles</button>
+        </div>
+    `;
+    document.body.appendChild(modalDiv);
+    
+    document.getElementById('copy-share-btn')?.addEventListener('click', async () => {
+        const textarea = document.getElementById('share-text');
+        await navigator.clipboard.writeText(textarea.value);
+        alert('✅ Playlist copiada al portapapeles');
+        modalDiv.remove();
+    });
+    
+    modalDiv.addEventListener('click', (e) => {
+        if (e.target === modalDiv) modalDiv.remove();
+    });
 }
+
+function copyPlaylistText(playlistId) {
+    const playlist = playlists.find(p => p.id === playlistId);
+    if (!playlist) return;
+    const text = playlist.songIds.map(id => {
+        const s = songs.find(s => s.id === id);
+        return `${s?.title} - ${s?.artist}`;
+    }).join('\n');
+    navigator.clipboard.writeText(`🎵 ${playlist.name}\n${text}`);
+    alert('📋 Playlist copiada');
+}
+
 // ==================== PLAYLISTS ====================
 function loadPlaylists() {
     const saved = localStorage.getItem('musicbox_playlists');
@@ -477,7 +634,6 @@ function openPlaylistModal(playlistId = null) {
         deleteBtn.style.display = 'none';
     }
     
-    // Mostrar canciones disponibles
     availableDiv.innerHTML = songs.map(s => `
         <div style="display:flex; align-items:center; gap:10px; padding:8px; margin:5px 0; background:rgba(0,0,0,0.3); border-radius:8px">
             <input type="checkbox" value="${s.id}" ${playlist && playlist.songIds.includes(s.id) ? 'checked' : ''}>
@@ -487,7 +643,6 @@ function openPlaylistModal(playlistId = null) {
     
     modalDiv.style.display = 'flex';
     
-    // Función para guardar
     const saveHandler = () => {
         const name = nameInput.value.trim();
         if (!name) return alert('Nombre requerido');
@@ -503,7 +658,6 @@ function openPlaylistModal(playlistId = null) {
         modalDiv.style.display = 'none';
     };
     
-    // Función para eliminar
     const deleteHandler = () => {
         if (playlist && confirm(`¿Eliminar la playlist "${playlist.name}"?`)) {
             playlists = playlists.filter(p => p.id !== playlist.id);
@@ -513,37 +667,23 @@ function openPlaylistModal(playlistId = null) {
         }
     };
     
-    // Función para cerrar
     const closeHandler = () => {
         modalDiv.style.display = 'none';
     };
     
-    // Remover event listeners anteriores para evitar duplicados
     saveBtn.removeEventListener('click', saveHandler);
     deleteBtn.removeEventListener('click', deleteHandler);
     closeBtn.removeEventListener('click', closeHandler);
     
-    // Agregar event listeners
     saveBtn.addEventListener('click', saveHandler);
     deleteBtn.addEventListener('click', deleteHandler);
     closeBtn.addEventListener('click', closeHandler);
     
-    // Cerrar al hacer clic fuera
     modalDiv.onclick = (e) => {
         if (e.target === modalDiv) modalDiv.style.display = 'none';
     };
 }
 
-function copyPlaylistText(playlistId) {
-    const playlist = playlists.find(p => p.id === playlistId);
-    if (!playlist) return;
-    const text = playlist.songIds.map(id => {
-        const s = songs.find(s => s.id === id);
-        return `${s?.title} - ${s?.artist}`;
-    }).join('\n');
-    navigator.clipboard.writeText(`🎵 ${playlist.name}\n${text}`);
-    alert('📋 Playlist copiada');
-}
 // ==================== PESTAÑAS ====================
 function initTabs() {
     document.querySelectorAll('.tab-btn').forEach(tab => {
@@ -562,13 +702,13 @@ playPauseBtn.addEventListener('click', playPause);
 nextBtn.addEventListener('click', nextSong);
 prevBtn.addEventListener('click', prevSong);
 
-audio.addEventListener('timeupdate', () => {
+audio.addEventListener('timeupdate', throttle(() => {
     if (audio.duration) {
         progressBar.value = (audio.currentTime / audio.duration) * 100;
         currentTimeSpan.textContent = formatTime(audio.currentTime);
         durationSpan.textContent = formatTime(audio.duration);
     }
-});
+}, 100));
 
 progressBar.addEventListener('input', () => {
     if (audio.duration) audio.currentTime = (progressBar.value / 100) * audio.duration;
@@ -592,7 +732,6 @@ fileInput.addEventListener('change', (e) => {
 closeModal.addEventListener('click', () => modal.style.display = 'none');
 window.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
 
-// ==================== CONFIRMAR DESCARGA (DETECTA YOUTUBE AUTOMÁTICAMENTE) ====================
 confirmDownload.addEventListener('click', () => {
     const url = downloadUrl.value.trim();
     const title = songTitleInput.value.trim();
@@ -603,7 +742,6 @@ confirmDownload.addEventListener('click', () => {
         return;
     }
     
-    // Detectar si es YouTube
     const isYoutube = url.includes('youtube.com') || url.includes('youtu.be');
     
     if (isYoutube) {
@@ -628,6 +766,143 @@ function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m] || m));
 }
+
+// ==================== DESCARGAR PLAYLIST COMPLETA ====================
+async function downloadPlaylist(playlistUrl, playlistName) {
+    if (!playlistUrl) return alert('Ingresa una URL de playlist de YouTube');
+    
+    const progressContainer = document.getElementById('playlist-progress-container');
+    const progressFill = document.getElementById('playlist-progress-fill');
+    const progressPercent = document.getElementById('playlist-progress-percent');
+    const currentSongSpan = document.getElementById('playlist-current-song');
+    
+    try {
+        if (progressContainer) progressContainer.style.display = 'block';
+        
+        // 1. Obtener lista de canciones del servidor
+        currentSongSpan.textContent = '📀 Obteniendo lista de canciones...';
+        const response = await fetch(`/api/get-playlist-songs?url=${encodeURIComponent(playlistUrl)}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al obtener playlist');
+        }
+        
+        const playlistData = await response.json();
+        const songs = playlistData.songs;
+        const total = songs.length;
+        
+        if (total === 0) {
+            throw new Error('La playlist está vacía');
+        }
+        
+        let downloaded = 0;
+        let failed = 0;
+        
+        // 2. Descargar canción por canción
+        for (let i = 0; i < songs.length; i++) {
+            const song = songs[i];
+            const percent = ((i + 1) / total) * 100;
+            
+            if (progressFill) progressFill.style.width = `${percent}%`;
+            if (progressPercent) progressPercent.textContent = `${Math.round(percent)}% (${i+1}/${total})`;
+            if (currentSongSpan) currentSongSpan.textContent = `🎵 Descargando: ${song.title}`;
+            
+            try {
+                // Descargar canción
+                const downloadResponse = await fetch(`/api/download-youtube?url=${encodeURIComponent(song.url)}`);
+                
+                if (!downloadResponse.ok) {
+                    throw new Error(`Error descargando ${song.title}`);
+                }
+                
+                let blob = await downloadResponse.blob();
+                blob = new Blob([blob], { type: 'audio/mpeg' });
+                
+                // Extraer artista (si está en el título)
+                let artist = 'YouTube';
+                let title = song.title;
+                
+                // Intentar separar artista - título (formato común: "Artista - Título")
+                if (song.title.includes(' - ')) {
+                    const parts = song.title.split(' - ');
+                    artist = parts[0];
+                    title = parts.slice(1).join(' - ');
+                }
+                
+                await saveSong(title, artist, blob);
+                downloaded++;
+                
+                // Pequeña pausa para no sobrecargar
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+            } catch (songError) {
+                console.error(`❌ Error con ${song.title}:`, songError);
+                failed++;
+            }
+        }
+        
+        await loadSongs();
+        
+        const finalName = playlistName || playlistData.name || 'Playlist';
+        alert(`✅ Playlist "${finalName}" completada!\n📀 Descargadas: ${downloaded}\n❌ Fallidas: ${failed}`);
+        
+        // Cerrar modal
+        const modal = document.getElementById('playlist-download-modal');
+        if (modal) modal.style.display = 'none';
+        
+    } catch (error) {
+        alert('Error: ' + error.message);
+        console.error(error);
+    } finally {
+        if (progressContainer) progressContainer.style.display = 'none';
+        if (progressFill) progressFill.style.width = '0%';
+    }
+}
+
+// ==================== EVENTOS PLAYLIST ====================
+const addPlaylistBtn = document.getElementById('add-playlist-btn');
+const playlistModal = document.getElementById('playlist-download-modal');
+const closePlaylistModal = document.getElementById('close-playlist-modal');
+const confirmPlaylistDownload = document.getElementById('confirm-playlist-download');
+const playlistUrlInput = document.getElementById('playlist-url');
+const playlistNameInput = document.getElementById('playlist-name-input');
+
+if (addPlaylistBtn) {
+    addPlaylistBtn.addEventListener('click', () => {
+        if (playlistModal) playlistModal.style.display = 'flex';
+    });
+}
+
+if (closePlaylistModal) {
+    closePlaylistModal.addEventListener('click', () => {
+        if (playlistModal) playlistModal.style.display = 'none';
+    });
+}
+
+if (confirmPlaylistDownload) {
+    confirmPlaylistDownload.addEventListener('click', async () => {
+        const url = playlistUrlInput.value.trim();
+        const name = playlistNameInput.value.trim();
+        
+        if (!url) {
+            alert('Ingresa una URL de playlist de YouTube');
+            return;
+        }
+        
+        await downloadPlaylist(url, name);
+        
+        playlistUrlInput.value = '';
+        playlistNameInput.value = '';
+    });
+}
+
+// Cerrar modal al hacer clic fuera
+window.addEventListener('click', (e) => {
+    if (e.target === playlistModal) {
+        if (playlistModal) playlistModal.style.display = 'none';
+    }
+});
 
 // ==================== INICIALIZAR ====================
 (async function start() {
