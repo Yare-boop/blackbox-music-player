@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlackBox - Importar Playlist</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', monospace;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #e8d5b5;
+        }
+        .container {
+            max-width: 500px;
+            padding: 30px;
+            text-align: center;
+        }
+        .logo {
+            font-size: 2rem;
+            font-weight: bold;
+            letter-spacing: 4px;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #e8d5b5, #9b7b4c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .card {
+            background: rgba(0,0,0,0.6);
+            border-radius: 24px;
+            padding: 30px;
+            border: 1px solid #9b7b4c;
+        }
+        .playlist-name {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: #c9a87b;
+        }
+        .song-list {
+            text-align: left;
+            margin: 20px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .song-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+        }
+        .song-title {
+            font-weight: bold;
+        }
+        .song-artist {
+            font-size: 0.8rem;
+            color: #9b7b4c;
+        }
+        button {
+            background: #9b7b4c;
+            border: none;
+            color: #0a0a0a;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #c9a87b;
+            transform: scale(1.02);
+        }
+        .info {
+            font-size: 0.7rem;
+            color: #888;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">⚫ BLACKBOX ⚫</div>
+        <div class="card">
+            <div id="content">
+                <div style="text-align: center;">
+                    <div style="font-size: 3rem; margin-bottom: 20px;">🎵</div>
+                    <p>Cargando playlist...</p>
+                </div>
+            </div>
+            <div class="info">
+                🎧 Escucha música de forma consciente
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Obtener el ID de la URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const shareId = urlParams.get('id');
+        
+        if (shareId) {
+            // Recuperar la playlist guardada
+            const saved = localStorage.getItem(`share_${shareId}`);
+            if (saved) {
+                const playlist = JSON.parse(saved);
+                document.getElementById('content').innerHTML = `
+                    <div class="playlist-name">📋 ${escapeHtml(playlist.name)}</div>
+                    <div class="song-list">
+                        ${playlist.songs.map(song => `
+                            <div class="song-item">
+                                <div class="song-title">${escapeHtml(song.title)}</div>
+                                <div class="song-artist">${escapeHtml(song.artist)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="window.location.href='/'">🎵 Ir al reproductor</button>
+                    <p style="margin-top: 15px; font-size: 0.8rem;">📱 Puedes agregar estas canciones desde el reproductor</p>
+                `;
+            } else {
+                document.getElementById('content').innerHTML = `
+                    <div style="text-align: center;">
+                        <div style="font-size: 3rem;">❌</div>
+                        <p>Playlist no encontrada</p>
+                        <button onclick="window.location.href='/'">Volver al reproductor</button>
+                    </div>
+                `;
+            }
+        } else {
+            document.getElementById('content').innerHTML = `
+                <div style="text-align: center;">
+                    <div style="font-size: 3rem;">🎵</div>
+                    <p>Comparte música de forma consciente</p>
+                    <p style="font-size: 0.8rem; margin-top: 10px;">⚫ BLACKBOX ⚫</p>
+                    <button onclick="window.location.href='/'">Ir al reproductor</button>
+                </div>
+            `;
+        }
+        
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            });
+        }
+    </script>
+</body>
+</html>

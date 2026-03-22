@@ -1,0 +1,8 @@
+{
+    "name"; "MusicBox",
+    "short_name"; "MusicBox",
+    "start_url"; "/",
+    "display"; "standalone",
+    "background_color"; "#0f172a",
+    "theme_color"; "#3b82f6"
+}

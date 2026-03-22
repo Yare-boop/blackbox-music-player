@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Diagnóstico de Audio</title>
+    <style>
+        body {
+            background: #1a1a2e;
+            color: white;
+            font-family: monospace;
+            padding: 20px;
+        }
+        button {
+            background: #9b7b4c;
+            color: black;
+            padding: 10px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        pre {
+            background: #0a0a0a;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎵 Diagnóstico de Audio</h1>
+    
+    <button id="checkBtn">🔍 Verificar Canción Actual</button>
+    <button id="testBtn">🔊 Probar Sonido Externo</button>
+    
+    <h3>Resultado:</h3>
+    <pre id="output">Esperando acción...</pre>
+
+    <script>
+        const output = document.getElementById('output');
+        
+        function log(msg) {
+            output.textContent += msg + '\n';
+            console.log(msg);
+        }
+        
+        document.getElementById('checkBtn').onclick = () => {
+            output.textContent = '';
+            log('🔍 Verificando...');
+            
+            // Abrir la base de datos
+            const request = indexedDB.open('MusicBoxDB', 5);
+            
+            request.onsuccess = (e) => {
+                const db = e.target.result;
+                log('✅ Base de datos abierta');
+                
+                // Obtener todas las canciones
+                const tx = db.transaction(['songs'], 'readonly');
+                const store = tx.objectStore('songs');
+                const getAll = store.getAll();
+                
+                getAll.onsuccess = () => {
+                    const songs = getAll.result;
+                    log(`📀 Canciones encontradas: ${songs.length}`);
+                    
+                    if (songs.length === 0) {
+                        log('❌ No hay canciones guardadas');
+                        return;
+                    }
+                    
+                    const lastSong = songs[songs.length - 1];
+                    log(`🎵 Última canción: ${lastSong.title} - ${lastSong.artist}`);
+                    log(`   ID: ${lastSong.id}`);
+                    log(`   Tamaño: ${(lastSong.size / 1024).toFixed(2)} KB`);
+                    
+                    // Buscar el audio
+                    const tx2 = db.transaction(['audioFiles'], 'readonly');
+                    const audioStore = tx2.objectStore('audioFiles');
+                    const getAudio = audioStore.get(lastSong.id);
+                    
+                    getAudio.onsuccess = () => {
+                        const audioData = getAudio.result;
+                        if (audioData && audioData.blob) {
+                            log(`✅ Audio encontrado!`);
+                            log(`   Tamaño del blob: ${(audioData.blob.size / 1024).toFixed(2)} KB`);
+                            log(`   Tipo MIME: ${audioData.blob.type}`);
+                            
+                            // Probar reproducción
+                            const url = URL.createObjectURL(audioData.blob);
+                            log(`🔊 Probando reproducción...`);
+                            
+                            const testAudio = new Audio();
+                            testAudio.src = url;
+                            testAudio.volume = 1;
+                            
+                            testAudio.oncanplay = () => {
+                                log('✅ Audio cargado correctamente');
+                                testAudio.play()
+                                    .then(() => log('🎵 ¡SONIDO REPRODUCIÉNDOSE!'))
+                                    .catch(e => log('❌ Error al reproducir: ' + e.message));
+                            };
+                            
+                            testAudio.onerror = () => {
+                                log('❌ El archivo NO es un audio válido');
+                                log('   Posiblemente está corrupto');
+                            };
+                        } else {
+                            log('❌ No se encontró el audio en la base de datos');
+                        }
+                    };
+                };
+            };
+            
+            request.onerror = () => log('❌ Error abriendo base de datos');
+        };
+        
+        document.getElementById('testBtn').onclick = () => {
+            output.textContent = '';
+            log('🔊 Probando sonido externo...');
+            
+            const testAudio = new Audio('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
+            testAudio.volume = 1;
+            testAudio.play()
+                .then(() => {
+                    log('✅ SONIDO EXTERNO FUNCIONA!');
+                    log('🎵 El problema es con tus canciones guardadas');
+                    testAudio.pause();
+                })
+                .catch(e => log('❌ Error con sonido externo: ' + e.message));
+        };
+    </script>
+</body>
+</html>

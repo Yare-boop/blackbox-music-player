@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <title>MusicBox - Reproductor Offline</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="manifest.js">
+  
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header>
+            <h1>🎵 BlackBox </h1>
+            <div class="storage-info">
+                <span>💾 </span>
+                <span id="storage-used">0 MB</span>
+                <span>/</span>
+                <span id="storage-total">---</span>
+            </div>
+        </header>
+
+        <!-- Reproductor principal -->
+        <div class="player-card">
+            <div class="cover-container">
+                <img id="cover-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232d3748'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23a0aec0' font-size='14'%3E🎵%3C/text%3E%3C/svg%3E" alt="Carátula">
+            </div>
+            
+            <div class="song-info">
+                <h2 id="song-title">Selecciona una canción</h2>
+                <p id="song-artist">---</p>
+            </div>
+
+            <div class="controls">
+                <button id="shuffle-btn" class="control-btn" title="Aleatorio">🔀</button>
+                <button id="prev-btn" class="control-btn">⏮</button>
+                <button id="play-pause-btn" class="control-btn play-btn">▶</button>
+                <button id="next-btn" class="control-btn">⏭</button>
+                <button id="repeat-btn" class="control-btn" title="Repetir">🔁</button>
+            </div>
+
+            <div class="progress-section">
+                <span id="current-time">0:00</span>
+                <input type="range" id="progress-bar" value="0" step="0.1">
+                <span id="duration">0:00</span>
+            </div>
+
+            <div class="volume-section">
+                <span>🔊</span>
+                <input type="range" id="volume-control" min="0" max="1" step="0.01" value="0.7">
+            </div>
+        </div>
+
+        <!-- Sección de biblioteca y playlists -->
+        <div class="library-section">
+            <!-- Pestañas -->
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="library">📚 Mi Biblioteca</button>
+                <button class="tab-btn" data-tab="playlists">📋 Playlists</button>
+            </div>
+
+            <!-- Contenido de Biblioteca -->
+            <div id="library-tab" class="tab-content active">
+                <div class="section-header">
+                    <h3>🎵 Todas las canciones</h3>
+                    <div class="actions">
+                        <button id="add-music-btn" class="action-btn">➕ Agregar música</button>
+                        <input type="file" id="file-input" accept=".mp3,.m4a,.ogg" multiple style="display: none">
+                    </div>
+                </div>
+
+                <!-- Buscador -->
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="🔍 Buscar canciones..." class="search-input">
+                </div>
+
+                <!-- Filtro por calificación -->
+                <div class="rating-filter">
+                    <button class="rating-btn active" data-rating="all">⭐ Todas</button>
+                    <button class="rating-btn" data-rating="5">⭐⭐⭐⭐⭐</button>
+                    <button class="rating-btn" data-rating="4">⭐⭐⭐⭐☆</button>
+                    <button class="rating-btn" data-rating="3">⭐⭐⭐☆☆</button>
+                    <button class="rating-btn" data-rating="2">⭐⭐☆☆☆</button>
+                    <button class="rating-btn" data-rating="1">⭐☆☆☆☆</button>
+                </div>
+
+                <!-- Lista de canciones -->
+                <div class="playlist-container">
+                    <ul id="playlist" class="playlist">
+                        <li class="empty-playlist">🎵 No hay canciones. Agrega música para empezar</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Contenido de Playlists -->
+            <div id="playlists-tab" class="tab-content">
+                <div class="section-header">
+                    <h3>📋 Mis Playlists</h3>
+                    <button id="create-playlist-btn" class="action-btn">➕ Crear Playlist</button>
+                </div>
+
+                <!-- Lista de playlists -->
+                <div id="playlists-list" class="playlists-container">
+                    <div class="empty-playlist">📀 No hay playlists. Crea una nueva</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal para descargar desde URL -->
+        <div id="download-modal" class="modal">
+            <div class="modal-content">
+                <span class="close-modal">&times;</span>
+                <h3>Descargar música desde URL</h3>
+                <input type="text" id="download-url" placeholder="https://ejemplo.com/cancion.mp3" class="modal-input">
+                <input type="text" id="song-title-input" placeholder="Título de la canción" class="modal-input">
+                <input type="text" id="artist-input" placeholder="Artista" class="modal-input">
+                <button id="confirm-download" class="modal-btn">Descargar</button>
+                <div id="download-progress-container" style="display: none;">
+                    <progress id="download-progress" value="0" max="100"></progress>
+                    <span id="progress-percent">0%</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal para crear/editar playlist -->
+        <div id="playlist-modal" class="modal">
+            <div class="modal-content">
+                <span class="close-modal" id="close-playlist-modal">&times;</span>
+                <h3 id="playlist-modal-title">📋 Crear Playlist</h3>
+                <input type="text" id="playlist-name" placeholder="Nombre de la playlist" class="modal-input">
+                <div id="playlist-songs-list" class="playlist-songs-list">
+                    <h4>🎵 Canciones disponibles</h4>
+                    <div id="available-songs"></div>
+                </div>
+                <button id="save-playlist-btn" class="modal-btn">💾 Guardar Playlist</button>
+                <button id="delete-playlist-btn" class="modal-btn delete-playlist-btn" style="display: none;">🗑️ Eliminar Playlist</button>
+            </div>
+        </div>
+
+        <!-- Modal para agregar a playlist desde canción -->
+        <div id="add-to-playlist-modal" class="modal">
+            <div class="modal-content">
+                <span class="close-modal" id="close-add-modal">&times;</span>
+                <h3>➕ Agregar a Playlist</h3>
+                <div id="playlist-options" class="playlist-options"></div>
+                <button id="create-new-from-add" class="modal-btn">➕ Crear nueva playlist</button>
+            </div>
+        </div>
+    </div>
+
+    <audio id="audio-player"></audio>
+    <script src="script.js"></script>
+</body>
+</html>
