@@ -1,264 +1,185 @@
 const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
+const cors    = require('cors');
 const { exec } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+const fs      = require('fs');
+const path    = require('path');
+const crypto  = require('crypto');
 
-const app = express();
-const PORT = 3001;
+const app  = express();
+const PORT = process.env.PORT || 3001;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'blackboxapp'))); // carpeta del frontend
 
-// Logging de peticiones
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
 });
 
-// Crear carpeta temporal
+// ── Carpeta temporal ──────────────────────────────────────────
 const TEMP_DIR = path.join(__dirname, 'temp');
-if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR);
-    console.log('📁 Carpeta temporal creada:', TEMP_DIR);
-}
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR);
 
-// ==================== UTILIDADES ====================
-
-function isYouTubeUrl(url) {
-    const patterns = [
-        /youtube\.com\/watch\?v=/,
-        /youtu\.be\//,
-        /youtube\.com\/shorts\//,
-        /youtube\.com\/embed\//,
-        /youtube\.com\/playlist\?list=/  // Nuevo: soporte para playlists
-    ];
-    return patterns.some(p => p.test(url));
-}
-
-function isSpotifyUrl(url) {
-    return url.includes('spotify.com/') && (url.includes('/playlist/') || url.includes('/album/'));
-}
-
-function isAppleMusicUrl(url) {
-    return url.includes('music.apple.com/');
-}
-
-// ==================== OBTENER PLAYLIST DE YOUTUBE ====================
-function getYouTubePlaylistSongs(playlistUrl) {
-    return new Promise((resolve, reject) => {
-        console.log(`📀 Obteniendo playlist de YouTube: ${playlistUrl}`);
-        
-        // Usar yt-dlp para obtener la lista de canciones
-        const command = `yt-dlp --flat-playlist --dump-json "${playlistUrl}"`;
-        
-        exec(command, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-            if (error) {
-                console.error('❌ Error obteniendo playlist:', error.message);
-                reject(error);
-                return;
-            }
-            
-            const lines = stdout.trim().split('\n').filter(line => line.trim());
-            const songs = [];
-            
-            for (const line of lines) {
-                try {
-                    const data = JSON.parse(line);
-                    if (data.title && data.url) {
-                        songs.push({
-                            title: data.title,
-                            url: data.url,
-                            duration: data.duration || 0
-                        });
-                    }
-                } catch (e) {
-                    console.error('Error parseando:', e.message);
-                }
-            }
-            
-            console.log(`✅ Encontradas ${songs.length} canciones en la playlist`);
-            resolve(songs);
-        });
-    });
-}
-
-// ==================== DESCARGAR CANCIÓN INDIVIDUAL ====================
-function downloadYouTubeSong(url, songTitle = null) {
-    return new Promise((resolve, reject) => {
-        const tempId = crypto.randomBytes(8).toString('hex');
-        const outputTemplate = path.join(TEMP_DIR, `${tempId}_%(title)s.%(ext)s`);
-        
-        console.log(`🎬 Descargando canción: ${songTitle || url}`);
-        
-        const command = `yt-dlp -x --audio-format mp3 --audio-quality 0 -o "${outputTemplate}" "${url}"`;
-        
-        exec(command, { maxBuffer: 100 * 1024 * 1024 }, (error, stdout, stderr) => {
-            if (error) {
-                reject(error);
-                return;
-            }
-            
-            // Buscar el archivo MP3
-            const files = fs.readdirSync(TEMP_DIR);
-            const mp3File = files.find(f => f.startsWith(tempId) && f.endsWith('.mp3'));
-            
-            if (!mp3File) {
-                reject(new Error('No se encontró el archivo MP3'));
-                return;
-            }
-            
-            const mp3Path = path.join(TEMP_DIR, mp3File);
-            
-            fs.readFile(mp3Path, (err, data) => {
-                // Limpiar archivo temporal
-                try { fs.unlinkSync(mp3Path); } catch(e) {}
-                
-                if (err) {
-                    reject(err);
-                } else {
-                    let title = mp3File.replace(`${tempId}_`, '').replace('.mp3', '');
-                    resolve({ data, title });
-                }
-            });
-        });
-    });
-}
-
-// ==================== ENDPOINTS ====================
-
-// Estado del servidor
-app.get('/api/status', (req, res) => {
-    res.json({ status: 'online', timestamp: new Date().toISOString() });
-});
-
-// Descarga directa desde URL
-app.get('/api/download', async (req, res) => {
-    const url = req.query.url;
-    
-    if (!url) {
-        return res.status(400).json({ error: 'URL requerida' });
-    }
-    
-    console.log(`🎵 Descargando directo: ${url}`);
-    
+// Limpiar temporales cada 5 min
+setInterval(() => {
     try {
-        const response = await axios({
-            method: 'get',
-            url: url,
-            responseType: 'stream',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            timeout: 60000
+        const now = Date.now();
+        fs.readdirSync(TEMP_DIR).forEach(f => {
+            const fp = path.join(TEMP_DIR, f);
+            if (now - fs.statSync(fp).mtimeMs > 300000) {
+                fs.unlinkSync(fp);
+            }
         });
-        
-        res.setHeader('Content-Type', response.headers['content-type'] || 'audio/mpeg');
-        response.data.pipe(res);
-        
-    } catch (error) {
-        console.error('❌ Error:', error.message);
-        res.status(500).json({ error: error.message });
-    }
+    } catch(e) {}
+}, 300000);
+
+// ── Opciones de yt-dlp ────────────────────────────────────────
+// User-Agent de Android para evitar bloqueos de YouTube
+const YT_UA = [
+    '--user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7)',
+    'AppleWebKit/537.36 (KHTML, like Gecko)',
+    'Chrome/120.0.0.0 Mobile Safari/537.36"'
+].join(' ');
+
+const YT_EXTRA = [
+    '--no-check-certificate',
+    '--age-limit 99',
+    '--extractor-args "youtube:player_client=android,web"',
+    YT_UA
+].join(' ');
+
+// ── Health check ──────────────────────────────────────────────
+app.get('/api/ping', (req, res) => {
+    res.json({ status: 'ok', message: '⚫ BlackBox Termux activo' });
 });
 
-// Descargar canción de YouTube individual
-app.get('/api/download-youtube', (req, res) => {
-    const url = req.query.url;
-    
-    if (!url) {
-        return res.status(400).json({ error: 'URL requerida' });
-    }
-    
-    if (!isYouTubeUrl(url)) {
-        return res.status(400).json({ error: 'No es una URL válida de YouTube' });
-    }
-    
-    downloadYouTubeSong(url, null).then(({ data, title }) => {
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('X-Audio-Title', encodeURIComponent(title));
-        res.send(data);
-    }).catch(error => {
-        console.error('❌ Error:', error.message);
-        res.status(500).json({ error: error.message });
-    });
-});
-
-// NUEVO: Obtener canciones de una playlist/álbum
-app.get('/api/get-playlist-songs', async (req, res) => {
-    const url = req.query.url;
-    
-    if (!url) {
-        return res.status(400).json({ error: 'URL requerida' });
-    }
-    
-    console.log(`📀 Solicitando playlist: ${url}`);
-    
-    try {
-        let songs = [];
-        let playlistName = '';
-        
-        if (isYouTubeUrl(url)) {
-            songs = await getYouTubePlaylistSongs(url);
-            playlistName = 'Playlist de YouTube';
-        } 
-        else if (isSpotifyUrl(url)) {
-            // Para Spotify necesitarías API key
-            return res.status(501).json({ 
-                error: 'Spotify requiere API key. Por ahora solo soporta YouTube',
-                suggestion: 'Convierte tu playlist de Spotify a YouTube con herramientas como "Spotify to YouTube"'
-            });
-        }
-        else {
-            return res.status(400).json({ error: 'URL no soportada. Solo YouTube por ahora' });
-        }
-        
-        if (songs.length === 0) {
-            return res.status(404).json({ error: 'No se encontraron canciones en la playlist' });
-        }
-        
-        res.json({
-            name: playlistName,
-            url: url,
-            totalSongs: songs.length,
-            songs: songs
-        });
-        
-    } catch (error) {
-        console.error('❌ Error:', error.message);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// NUEVO: Descargar playlist completa (una por una)
-app.post('/api/download-playlist', async (req, res) => {
-    const { url, songUrls } = req.body;
-    
-    if (!url && !songUrls) {
-        return res.status(400).json({ error: 'Se requiere URL de playlist o lista de canciones' });
-    }
-    
-    // Esta es una versión simplificada
-    // En producción, mejor descargar una por una desde el frontend
-    res.json({ message: 'Usa /api/get-playlist-songs primero, luego descarga cada canción individualmente' });
-});
-
-// Ruta principal
+// ── Ruta principal → sirve el frontend ───────────────────────
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'blackboxapp', 'index.html'));
 });
 
-// Iniciar servidor
-app.listen(PORT, () => {
-    console.log('\n=================================');
-    console.log('🎵 BlackBox - Music Downloader');
-    console.log('=================================');
-    console.log(`✅ Servidor en: http://localhost:${PORT}`);
-    console.log(`🎬 YouTube: http://localhost:${PORT}/api/download-youtube`);
-    console.log(`📀 Playlists: http://localhost:${PORT}/api/get-playlist-songs`);
-    console.log('=================================\n');
+// ── /api/playlist-info → metadatos sin descargar ─────────────
+app.post('/api/playlist-info', (req, res) => {
+    const url = (req.body.url || '').trim();
+    if (!url) return res.status(400).json({ error: 'No se proporcionó URL' });
+
+    console.log(`📋 Obteniendo info de playlist: ${url}`);
+
+    const cmd = `yt-dlp --flat-playlist --dump-json ${YT_EXTRA} "${url}"`;
+
+    exec(cmd, { maxBuffer: 20 * 1024 * 1024, timeout: 60000 }, (err, stdout, stderr) => {
+        if (err) {
+            console.error('❌ playlist-info error:', err.message);
+            return res.status(500).json({ error: err.message.slice(0, 200) });
+        }
+
+        const lines = stdout.trim().split('\n').filter(Boolean);
+        const songs = [];
+        let playlistName = 'Playlist';
+
+        for (const line of lines) {
+            try {
+                const d = JSON.parse(line);
+                // El primer objeto puede tener el título de la playlist
+                if (d.playlist_title) playlistName = d.playlist_title;
+
+                const vidId = d.id || '';
+                if (!vidId) continue;
+
+                const vidUrl = vidId.length === 11
+                    ? `https://www.youtube.com/watch?v=${vidId}`
+                    : (d.url || vidId);
+
+                songs.push({
+                    id:       vidId,
+                    title:    d.title || 'Sin título',
+                    url:      vidUrl,
+                    duration: d.duration || 0,
+                });
+            } catch(e) {}
+        }
+
+        console.log(`✅ ${songs.length} canciones encontradas`);
+        res.json({ name: playlistName, total: songs.length, songs });
+    });
+});
+
+// ── /api/download → descarga una canción y la envía al browser ─
+app.post('/api/download', (req, res) => {
+    const url = (req.body.url || '').trim();
+    if (!url) return res.status(400).json({ error: 'No se proporcionó URL' });
+
+    const tempId     = crypto.randomBytes(8).toString('hex');
+    const outputTmpl = path.join(TEMP_DIR, `${tempId}_%(title)s.%(ext)s`);
+
+    console.log(`🎵 Descargando: ${url}`);
+
+    const cmd = [
+        'yt-dlp',
+        '-x --audio-format mp3 --audio-quality 192K',
+        `--no-playlist`,
+        YT_EXTRA,
+        `-o "${outputTmpl}"`,
+        `"${url}"`
+    ].join(' ');
+
+    exec(cmd, { maxBuffer: 200 * 1024 * 1024, timeout: 300000 }, (err, stdout, stderr) => {
+        if (err) {
+            console.error('❌ download error:', err.message.slice(0, 300));
+
+            // Mensajes de error claros
+            if (err.message.includes('Sign in') || err.message.includes('bot')) {
+                return res.status(500).json({ error: 'YouTube bloqueó la descarga (bot detection)' });
+            }
+            if (err.message.includes('unavailable') || err.message.includes('Private')) {
+                return res.status(400).json({ error: 'Video no disponible o privado' });
+            }
+            return res.status(500).json({ error: err.message.slice(0, 150) });
+        }
+
+        // Buscar el archivo generado
+        let audioFile = null;
+        try {
+            const files = fs.readdirSync(TEMP_DIR);
+            for (const ext of ['.mp3', '.m4a', '.ogg', '.opus', '.webm']) {
+                const f = files.find(f => f.startsWith(tempId) && f.endsWith(ext));
+                if (f) { audioFile = path.join(TEMP_DIR, f); break; }
+            }
+        } catch(e) {}
+
+        if (!audioFile || !fs.existsSync(audioFile)) {
+            return res.status(500).json({ error: 'No se generó el archivo de audio' });
+        }
+
+        // Extraer título del nombre de archivo
+        const rawName  = path.basename(audioFile, path.extname(audioFile));
+        const title    = rawName.replace(`${tempId}_`, '').trim() || 'cancion';
+        const safeTitle = title.replace(/[^\w\s\-áéíóúÁÉÍÓÚñÑ]/g, '').slice(0, 80).trim();
+
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeTitle}.mp3"`);
+        res.setHeader('X-Song-Title', safeTitle);
+        res.setHeader('Access-Control-Expose-Headers', 'X-Song-Title');
+
+        const stream = fs.createReadStream(audioFile);
+        stream.pipe(res);
+        stream.on('end', () => {
+            try { fs.unlinkSync(audioFile); } catch(e) {}
+        });
+        stream.on('error', (e) => {
+            console.error('Stream error:', e.message);
+            try { fs.unlinkSync(audioFile); } catch(e) {}
+        });
+    });
+});
+
+// ── Iniciar ───────────────────────────────────────────────────
+app.listen(PORT, '0.0.0.0', () => {
+    console.log('\n================================');
+    console.log('  ⚫  B L A C K B O X');
+    console.log('================================');
+    console.log(`✅ http://localhost:${PORT}`);
+    console.log(`📡 http://TU_IP_LOCAL:${PORT}`);
+    console.log('================================\n');
 });
